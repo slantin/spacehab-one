@@ -31,19 +31,18 @@ import numpy as np
 from random import randint
 import matplotlib.pyplot as plt
 
-num_crew = 1
+num_crew = 2
 num_recyclers = 1
-simulation_end = 10
-
-# class Object(object):
-
-#     def __init__(self):
-#         pass
-#         #self.value = 250
-#         #self.owner = person.id
-
-#     #def appreciate(self):
-#         #self.value += self.value*appreciation_per_tick
+num_air_recyclers = 1
+num_initial_plants = 1
+simulation_end = 100
+plant_grow_prob = 0.01
+plant_clean_air_req = 5
+plant_bad_air_req = 5
+plant_clean_water_req = 5
+plant_ticks_to_grow = 3
+grow_chance = 25 # percent
+move_chance = 5 # percent
 
 class hasWater(object):
 
@@ -55,9 +54,10 @@ class hasWater(object):
     def dirtifyWater(self,value):
         if self.cleanWater >= value:
             self.cleanWater -= value
+            self.greyWater += value
         else:
+            self.greyWater += self.cleanWater
             self.cleanWater = float(0)
-        self.greyWater += value
 
     def toWaterRecycler(self,value):
         # check if there's room for all of the grey water
@@ -66,10 +66,34 @@ class hasWater(object):
         #picked_recycler = recyclers
         picked_recycler = recyclers[randint(0,len(recyclers)-1)]
         if (picked_recycler.cleanWater + picked_recycler.greyWater + value) <= picked_recycler.capacityWater:
-            picked_recycler.greyWater += self.greyWater
+            picked_recycler.greyWater += value
             self.greyWater -= value
         else:
             print("The water recycler is currently full.")
+
+
+class hasAir(object):
+
+    def __init__(self):
+        self.cleanAir = float(0)
+        self.badAir = float(0)
+    
+    def dirtifyAir(self,value):
+        if self.cleanAir >= value:
+            self.cleanAir -= value
+            self.badAir += value
+        else:
+            self.badAir += self.cleanAir
+            self.cleanAir = float(0)
+    
+    def toAirRecycler(self,value):
+        # air can be compressed and doesn't have a residence time
+        # don't call this if you're an air recycler
+        # pick a recycler
+        picked_recycler = air_recyclers[randint(0,len(air_recyclers)-1)]
+        picked_recycler.badAir += value
+        self.badAir -= value
+
 
 class WaterRecycler(hasWater):
 
@@ -100,7 +124,51 @@ class WaterRecycler(hasWater):
     def queryWater(self):
         print(f"Water Recycler {self.name}\nGrey Water: {self.greyWater}\nClean Water: {self.cleanWater}\n\n")
 
-class CrewMember(hasWater):
+
+class AirRecycler(hasAir):
+    # air is assumed to be automatically purified and not stored, unlike water in water recyclers
+    def __init__(self,name):
+        super(AirRecycler,self).__init__()
+        self.name = name
+
+class Room(hasAir):
+
+    def __init__(self,name):
+        super(Room,self).__init__()
+        self.name = name
+        self.cleanAir = float(100)
+        self.badAir = float(100)
+        self.crewPresent = 0
+
+
+    def queryAttributes(self):
+        print(f"Room {self.name}\nClean Air: {self.cleanAir}\nThere are {self.crewPresent} crew members present.\n")
+
+class GrowthChamber(Room,hasWater):
+
+    def __init__(self,name):
+        super(GrowthChamber,self).__init__(name)
+        self.numPlants = 0
+        self.maxPlants = 20
+        self.cleanWater = float(100)
+        self.cleanAir = float(100)
+
+    def plant(self):
+        if self.crewPresent > 0 and (self.numPlants < self.maxPlants):
+            plants.append(Plant())
+            self.numPlants += 1
+    
+    
+    def queryPlants(self):
+        if self.numPlants == 1:
+            print(f"There is {self.numPlants} plant in {self.name}.")
+        else:
+            print(f"There are {self.numPlants} plants in {self.name}.")
+
+    def queryWater(self):
+        print(f"Room {self.name}\nClean Water: {self.cleanWater}\n\n")
+
+class CrewMember(hasWater,hasAir):
 
     #id_iter = itertools.count()
 
@@ -108,8 +176,11 @@ class CrewMember(hasWater):
         super(CrewMember,self).__init__()
         #self.id = next(self.id_iter)
         self.name = name
-        self.location = "Cabin"
-        self.greyWater = 10
+        self.location = rooms[0] # start in cabin, room 0
+        self.greyWater = float(10)
+        self.badAir = float(10)
+        self.new_location = rooms[0]
+        rooms[0].crewPresent += 1
 
     def toilet(self):
         self.toWaterRecycler(self.greyWater)
@@ -122,16 +193,76 @@ class CrewMember(hasWater):
         else:
             print("This water recycler is currently empty.")
 
+    def breathe(self,value):
+        self.badAir -= value
+
+    def moveTo(self):
+        while self.new_location == self.location \
+        and randint(1,100) <= move_chance:
+            self.new_location = rooms[randint(0,len(rooms)-1)]
+        self.location.crewPresent -= 1
+        self.location = self.new_location
+        self.location.crewPresent += 1
+        
+
     def queryAttributes(self):
         print(f"Crew Member {self.name}\nGrey Water: {self.greyWater}\n\n")
+        print(f"Crew Member {self.name} is in {self.location.name}.")
+
+class Plant(object):
+    id_iter = itertools.count()
+    # other plant variables are globally defined so that it's easier to change the parameters
+    def __init__(self):
+        super(Plant,self).__init__()
+        self.id = next(self.id_iter)
+        self.growthStage = 0
+        placement = randint(1,2) # growth chambers are rooms 1 & 2
+        self.location = rooms[placement]
+        self.location.numPlants += 1
+        self.isNotHarvested = 1
         
-    
+
+    def grow(self):
+        if (self.location.cleanAir >= plant_clean_air_req) \
+        and (self.location.badAir >= plant_bad_air_req) \
+        and (self.location.cleanWater >= plant_clean_water_req) \
+        and randint(1,100) <= grow_chance \
+        and self.isNotHarvested \
+        and self.growthStage < plant_ticks_to_grow:
+            self.growthStage += 1
+        # cleans a small amount of air
+        self.location.badAir -= 0.1
+        self.location.cleanAir += 0.1
+
+    def harvest(self):
+        global harvested_plants
+        if (self.growthStage == plant_ticks_to_grow) \
+        and self.location.crewPresent > 0 \
+        and self.isNotHarvested:
+            self.location.numPlants -= 1
+            harvested_plants += 1
+            self.isNotHarvested = 0
+            self.growthStage = "Harvested"
+
+
+    def checkStatus(self):
+        print(f"Plant {self.id} Growth Stage: {self.growthStage}")
+
+
     
 
 # initial conditions
 crew = [CrewMember(f"{i}") for i in range(num_crew)]
 
 recyclers = [WaterRecycler(f"{i}") for i in range(num_recyclers)]
+
+air_recyclers = [AirRecycler(f"{i}") for i in range(num_air_recyclers)]
+
+rooms = [Room("Cabin"),GrowthChamber("Growth Chamber 1"),GrowthChamber("Growth Chamber 2"),Room("Outside")]
+
+plants = [Plant() for plant in range(num_initial_plants)]
+
+harvested_plants = 0
 
 # main loop
 tick = 0
@@ -156,9 +287,29 @@ while tick < simulation_end:
     [recycler.queryWater() for recycler in recyclers]
     [crewmember.queryAttributes() for crewmember in crew]
 
-    # test residence time
+    # Unit Test: Grow
+    print("grow")
+    [plant.grow() for plant in plants]
+    [room.queryAttributes() for room in rooms]
+
+    # Unit Test: Plant
+    print("plant")
+    for room in rooms:
+        if isinstance(room,GrowthChamber):
+            room.plant()
+            room.queryPlants()
+    [plant.checkStatus() for plant in plants]
+
+    # Unit Test: Move
+    [crewmember.moveTo() for crewmember in crew]
+
+    # Unit Test: Harvest
+    [plant.harvest() for plant in plants]
+
+
     tick += 1
 
+print(f"There were {harvested_plants} harvested.")
 [crewmember.queryAttributes() for crewmember in crew]
 [recycler.queryWater() for recycler in recyclers]
 
